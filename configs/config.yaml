@@ -1,0 +1,13 @@
+app:
+  name: template-app
+  env: dev
+
+log:
+  level: info
+  format: console
+  path: logs/app.log
+  max_size: 200
+  max_age: 60
+  max_backups: 60
+  compress: true
+  log_to_console: true
