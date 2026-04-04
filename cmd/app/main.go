@@ -79,7 +79,7 @@ func main() {
 		}
 	})
 
-	if err := config.StartWatcher(); err != nil {
+	if _, err := config.StartWatcher(); err != nil {
 		logger.Warn("Failed to start config watcher", zap.Error(err))
 	}
 
@@ -100,6 +100,6 @@ func main() {
 
 func cleanup() {
 	logger.Info("Cleaning up resources...")
-	config.CloseWatcher()
+	config.StopWatcher()
 	logger.Sync()
 }

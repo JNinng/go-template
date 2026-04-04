@@ -10,6 +10,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 
@@ -208,15 +209,12 @@ func updateConfig() error {
 	}
 
 	oldCfg := globalConfig.Swap(newCfg)
+	if reflect.DeepEqual(newCfg, oldCfg) {
+		return nil
+	}
+
 	triggerCallbacks(newCfg, oldCfg)
 	return nil
-}
-
-// CloseWatcher 关闭配置文件的监视器
-func CloseWatcher() {
-	if watcher != nil {
-		watcher.Close()
-	}
 }
 
 // GenerateConfig 生成默认配置文件
