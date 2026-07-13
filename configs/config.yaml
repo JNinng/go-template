@@ -23,6 +23,9 @@ nacos:
   log_dir: logs
   cache_dir: cache
 
+nacos_service:
+  enabled: false
+
 observability:
   enabled: false
   addr: ":9090"
