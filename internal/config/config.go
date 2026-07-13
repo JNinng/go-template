@@ -132,26 +132,26 @@ var (
 
 // 默认配置值
 const (
-	DefaultAppName        = "app"          // 默认应用名称
-	DefaultAppEnv         = "dev"          // 默认运行环境
-	DefaultAppPort        = 8080           // 默认应用端口
-	DefaultAppWatch       = false          // 默认监控配置文件变更
-	DefaultAppEnableNacos = false          // 默认启用 Nacos
-	DefaultLogLevel       = "info"         // 默认日志级别
-	DefaultLogFormat      = "console"      // 默认日志格式
-	DefaultLogPath        = "logs/app.log" // 默认日志路径
-	DefaultLogMaxSize     = 200            // 默认单个日志文件最大大小 (MB)
-	DefaultLogMaxAge      = 60             // 默认日志文件保留天数
-	DefaultLogMaxBackups  = 60             // 默认保留的日志文件数量
-	DefaultLogCompress    = true           // 默认启用日志压缩
-	DefaultLogToConsole   = true           // 默认启用控制台输出
-	DefaultObsAddr        = ":9090"
-	DefaultObsMetricsPath = "/metrics"
-	DefaultObsHealthPath  = "/health"
+	DefaultAppName            = "app"          // 默认应用名称
+	DefaultAppEnv             = "dev"          // 默认运行环境
+	DefaultAppPort            = 8080           // 默认应用端口
+	DefaultAppWatch           = false          // 默认监控配置文件变更
+	DefaultAppEnableNacos     = false          // 默认启用 Nacos
+	DefaultLogLevel           = "info"         // 默认日志级别
+	DefaultLogFormat          = "console"      // 默认日志格式
+	DefaultLogPath            = "logs/app.log" // 默认日志路径
+	DefaultLogMaxSize         = 200            // 默认单个日志文件最大大小 (MB)
+	DefaultLogMaxAge          = 60             // 默认日志文件保留天数
+	DefaultLogMaxBackups      = 60             // 默认保留的日志文件数量
+	DefaultLogCompress        = true           // 默认启用日志压缩
+	DefaultLogToConsole       = true           // 默认启用控制台输出
+	DefaultObsAddr            = ":9090"
+	DefaultObsMetricsPath     = "/metrics"
+	DefaultObsHealthPath      = "/health"
 	DefaultNacosServiceWeight = 10
 	DefaultNacosServicePort   = 8080
-	DefaultOTelEndpoint   = "localhost:4317"
-	DefaultOTelProtocol   = "grpc"
+	DefaultOTelEndpoint       = "localhost:4317"
+	DefaultOTelProtocol       = "grpc"
 )
 
 // DefaultAppConfig 返回默认应用配置
