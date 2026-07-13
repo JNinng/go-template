@@ -8,6 +8,7 @@ import (
 	"go-template/internal/app"
 	"go-template/internal/config"
 	"go-template/internal/logger"
+	"go-template/internal/nacos"
 	"go-template/internal/observability"
 	"go-template/internal/signal"
 
@@ -52,6 +53,26 @@ var rootCmd = &cobra.Command{
 		if cfg.Observability.Enabled {
 			if err := observability.Start(ctx, cfg.Observability); err != nil {
 				logger.Warnf("Failed to start observability: %v", err)
+			}
+		}
+
+		// 自动注册到 Nacos
+		if cfg.NacosService.Enabled {
+			registrar, err := nacos.NewRegistrar(&cfg.NacosService)
+			if err != nil {
+				logger.Warnf("Failed to create nacos registrar: %v", err)
+			} else {
+				if err := registrar.Register(); err != nil {
+					logger.Warnf("Failed to register service with nacos: %v", err)
+				} else {
+					defer registrar.Deregister()
+					defer registrar.Close()
+					logger.Info("Service registered with Nacos",
+						zap.String("service", cfg.NacosService.ServiceName),
+						zap.String("ip", cfg.NacosService.ServiceIP),
+						zap.Uint64("port", cfg.NacosService.ServicePort),
+					)
+				}
 			}
 		}
 
