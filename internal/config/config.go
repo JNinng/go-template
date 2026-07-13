@@ -27,6 +27,7 @@ import (
 type AppConfig struct {
 	Name        string `yaml:"name" mapstructure:"name"`                 // 应用名称
 	Env         string `yaml:"env" mapstructure:"env"`                   // 运行环境
+	Port        int    `yaml:"port" mapstructure:"port"`                 // 应用端口
 	Watch       bool   `yaml:"watch" mapstructure:"watch"`               // 是否监控配置文件变更
 	EnableNacos bool   `yaml:"enable_nacos" mapstructure:"enable_nacos"` // 是否启用 Nacos
 }
@@ -133,6 +134,7 @@ var (
 const (
 	DefaultAppName        = "app"          // 默认应用名称
 	DefaultAppEnv         = "dev"          // 默认运行环境
+	DefaultAppPort        = 8080           // 默认应用端口
 	DefaultAppWatch       = false          // 默认监控配置文件变更
 	DefaultAppEnableNacos = false          // 默认启用 Nacos
 	DefaultLogLevel       = "info"         // 默认日志级别
@@ -157,6 +159,7 @@ func DefaultAppConfig() AppConfig {
 	return AppConfig{
 		Name:        DefaultAppName,
 		Env:         DefaultAppEnv,
+		Port:        DefaultAppPort,
 		Watch:       DefaultAppWatch,
 		EnableNacos: DefaultAppEnableNacos,
 	}
@@ -208,25 +211,59 @@ func DefaultNacosConfig() NacosConfig {
 // DefaultNacosServiceConfig 返回默认 Nacos 服务注册配置
 //
 // 连接参数（Addr, Port, Namespace, Group, Username, Password,
-// LogLevel, LogDir, CacheDir）默认复用 DefaultNacosConfig 的值。
+// LogLevel, LogDir, CacheDir）和 ServiceName、ServicePort 设为零值，
+// 运行时由 ApplyDefaults 从 NacosConfig / AppConfig 回退填充。
 func DefaultNacosServiceConfig() NacosServiceConfig {
-	nc := DefaultNacosConfig()
 	return NacosServiceConfig{
-		Addr:        nc.Addr,
-		Port:        nc.Port,
-		Namespace:   nc.Namespace,
-		Group:       nc.Group,
-		Username:    nc.Username,
-		Password:    nc.Password,
-		ServiceName: DefaultAppName,
 		ClusterName: "DEFAULT",
 		ServiceIP:   "127.0.0.1",
-		ServicePort: DefaultNacosServicePort,
 		Weight:      DefaultNacosServiceWeight,
 		Healthy:     true,
-		LogLevel:    nc.LogLevel,
-		LogDir:      nc.LogDir,
-		CacheDir:    nc.CacheDir,
+	}
+}
+
+// ApplyDefaults 从其他配置源补充未设置字段的默认值
+//
+// 连接参数（Addr, Port, Namespace 等）在未配置时回退到 NacosConfig 的值；
+// ServiceName 回退到 AppConfig.Name；
+// ServicePort 回退到 AppConfig.Port。
+//
+// 参数:
+//   - nc: Nacos 配置中心配置（提供连接参数回退值）
+//   - ac: 应用基础配置（提供服务名和端口回退值）
+func (c *NacosServiceConfig) ApplyDefaults(nc *NacosConfig, ac *AppConfig) {
+	if c.Addr == "" {
+		c.Addr = nc.Addr
+	}
+	if c.Port == 0 {
+		c.Port = nc.Port
+	}
+	if c.Namespace == "" {
+		c.Namespace = nc.Namespace
+	}
+	if c.Group == "" {
+		c.Group = nc.Group
+	}
+	if c.Username == "" {
+		c.Username = nc.Username
+	}
+	if c.Password == "" {
+		c.Password = nc.Password
+	}
+	if c.LogLevel == "" {
+		c.LogLevel = nc.LogLevel
+	}
+	if c.LogDir == "" {
+		c.LogDir = nc.LogDir
+	}
+	if c.CacheDir == "" {
+		c.CacheDir = nc.CacheDir
+	}
+	if c.ServiceName == "" {
+		c.ServiceName = ac.Name
+	}
+	if c.ServicePort == 0 {
+		c.ServicePort = uint64(ac.Port)
 	}
 }
 
@@ -372,6 +409,7 @@ func updateConfig(data []byte) {
 func setDefaults() {
 	v.SetDefault("app.name", DefaultAppName)
 	v.SetDefault("app.env", DefaultAppEnv)
+	v.SetDefault("app.port", DefaultAppPort)
 	v.SetDefault("app.watch", DefaultAppWatch)
 	v.SetDefault("app.enable_nacos", DefaultAppEnableNacos)
 	v.SetDefault("log.level", DefaultLogLevel)
@@ -390,10 +428,8 @@ func setDefaults() {
 	v.SetDefault("observability.otel.logs.enabled", false)
 	v.SetDefault("observability.otel.traces.enabled", false)
 	v.SetDefault("nacos_service.enabled", false)
-	v.SetDefault("nacos_service.service_name", DefaultAppName)
 	v.SetDefault("nacos_service.cluster_name", "DEFAULT")
 	v.SetDefault("nacos_service.service_ip", "127.0.0.1")
-	v.SetDefault("nacos_service.service_port", DefaultNacosServicePort)
 	v.SetDefault("nacos_service.weight", DefaultNacosServiceWeight)
 	v.SetDefault("nacos_service.healthy", true)
 }
@@ -488,6 +524,7 @@ func GenerateConfig(outputPath string) {
 	}
 
 	cfg := DefaultConfig()
+	cfg.NacosService.ApplyDefaults(&cfg.Nacos, &cfg.App)
 	data, err := cfg.ToYAML()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to marshal config: %v\n", err)

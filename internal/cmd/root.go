@@ -58,6 +58,7 @@ var rootCmd = &cobra.Command{
 
 		// 自动注册到 Nacos
 		if cfg.NacosService.Enabled {
+			cfg.NacosService.ApplyDefaults(&cfg.Nacos, &cfg.App)
 			registrar, err := nacos.NewRegistrar(&cfg.NacosService)
 			if err != nil {
 				logger.Warnf("Failed to create nacos registrar: %v", err)
