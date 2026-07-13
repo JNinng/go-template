@@ -57,6 +57,27 @@ type NacosConfig struct {
 	CacheDir  string `yaml:"cache_dir" mapstructure:"cache_dir"`
 }
 
+// NacosServiceConfig Nacos 服务注册与发现配置
+type NacosServiceConfig struct {
+	Enabled     bool              `yaml:"enabled"      mapstructure:"enabled"`
+	Addr        string            `yaml:"addr"         mapstructure:"addr"`
+	Port        uint64            `yaml:"port"         mapstructure:"port"`
+	Namespace   string            `yaml:"namespace"    mapstructure:"namespace"`
+	Group       string            `yaml:"group"        mapstructure:"group"`
+	Username    string            `yaml:"username"     mapstructure:"username"`
+	Password    string            `yaml:"password"     mapstructure:"password"`
+	ServiceName string            `yaml:"service_name" mapstructure:"service_name"`
+	ClusterName string            `yaml:"cluster_name" mapstructure:"cluster_name"`
+	ServiceIP   string            `yaml:"service_ip"   mapstructure:"service_ip"`
+	ServicePort uint64            `yaml:"service_port" mapstructure:"service_port"`
+	Weight      float64           `yaml:"weight"       mapstructure:"weight"`
+	Healthy     bool              `yaml:"healthy"      mapstructure:"healthy"`
+	Metadata    map[string]string `yaml:"metadata"     mapstructure:"metadata"`
+	LogLevel    string            `yaml:"log_level"    mapstructure:"log_level"`
+	LogDir      string            `yaml:"log_dir"      mapstructure:"log_dir"`
+	CacheDir    string            `yaml:"cache_dir"    mapstructure:"cache_dir"`
+}
+
 // ObservabilityConfig 可观测性配置
 type ObservabilityConfig struct {
 	Enabled     bool       `yaml:"enabled" mapstructure:"enabled"`
@@ -84,6 +105,7 @@ type Config struct {
 	App           AppConfig           `yaml:"app" mapstructure:"app"`
 	Log           LogConfig           `yaml:"log" mapstructure:"log"`
 	Nacos         NacosConfig         `yaml:"nacos" mapstructure:"nacos"`
+	NacosService  NacosServiceConfig  `yaml:"nacos_service" mapstructure:"nacos_service"`
 	Observability ObservabilityConfig `yaml:"observability" mapstructure:"observability"`
 	Secret        struct {
 		Key string `yaml:"key" mapstructure:"key"`
@@ -124,6 +146,8 @@ const (
 	DefaultObsAddr        = ":9090"
 	DefaultObsMetricsPath = "/metrics"
 	DefaultObsHealthPath  = "/health"
+	DefaultNacosServiceWeight = 10
+	DefaultNacosServicePort   = 8080
 	DefaultOTelEndpoint   = "localhost:4317"
 	DefaultOTelProtocol   = "grpc"
 )
@@ -181,6 +205,31 @@ func DefaultNacosConfig() NacosConfig {
 	}
 }
 
+// DefaultNacosServiceConfig 返回默认 Nacos 服务注册配置
+//
+// 连接参数（Addr, Port, Namespace, Group, Username, Password,
+// LogLevel, LogDir, CacheDir）默认复用 DefaultNacosConfig 的值。
+func DefaultNacosServiceConfig() NacosServiceConfig {
+	nc := DefaultNacosConfig()
+	return NacosServiceConfig{
+		Addr:        nc.Addr,
+		Port:        nc.Port,
+		Namespace:   nc.Namespace,
+		Group:       nc.Group,
+		Username:    nc.Username,
+		Password:    nc.Password,
+		ServiceName: DefaultAppName,
+		ClusterName: "DEFAULT",
+		ServiceIP:   "127.0.0.1",
+		ServicePort: DefaultNacosServicePort,
+		Weight:      DefaultNacosServiceWeight,
+		Healthy:     true,
+		LogLevel:    nc.LogLevel,
+		LogDir:      nc.LogDir,
+		CacheDir:    nc.CacheDir,
+	}
+}
+
 // DefaultConfig 返回默认配置
 //
 // 返回值:
@@ -190,6 +239,7 @@ func DefaultConfig() *Config {
 		App:           DefaultAppConfig(),
 		Log:           DefaultLogConfig(),
 		Nacos:         DefaultNacosConfig(),
+		NacosService:  DefaultNacosServiceConfig(),
 		Observability: DefaultObservabilityConfig(),
 	}
 }
@@ -339,6 +389,13 @@ func setDefaults() {
 	v.SetDefault("observability.otel.protocol", DefaultOTelProtocol)
 	v.SetDefault("observability.otel.logs.enabled", false)
 	v.SetDefault("observability.otel.traces.enabled", false)
+	v.SetDefault("nacos_service.enabled", false)
+	v.SetDefault("nacos_service.service_name", DefaultAppName)
+	v.SetDefault("nacos_service.cluster_name", "DEFAULT")
+	v.SetDefault("nacos_service.service_ip", "127.0.0.1")
+	v.SetDefault("nacos_service.service_port", DefaultNacosServicePort)
+	v.SetDefault("nacos_service.weight", DefaultNacosServiceWeight)
+	v.SetDefault("nacos_service.healthy", true)
 }
 
 // Get 获取当前配置
