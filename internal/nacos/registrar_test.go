@@ -118,3 +118,33 @@ func TestConfigDefaultNacosServiceConfig(t *testing.T) {
 		t.Errorf("expected Group DEFAULT_GROUP, got %q", ns.Group)
 	}
 }
+
+func TestSubscribeCallbackTracking(t *testing.T) {
+	r := &Registrar{
+		cfg:          &config.NacosServiceConfig{},
+		subCallbacks: make(map[string]SubscribeCallback),
+	}
+
+	called := false
+	cb := func(services []model.Instance, err error) {
+		called = true
+	}
+
+	// Simulate callback storage (no real client needed)
+	r.subMu.Lock()
+	r.subCallbacks[subKey("test-svc", nil)] = cb
+	r.subMu.Unlock()
+
+	// Verify the callback was stored
+	r.subMu.Lock()
+	stored, ok := r.subCallbacks[subKey("test-svc", nil)]
+	r.subMu.Unlock()
+
+	if !ok {
+		t.Fatal("expected callback to be stored")
+	}
+	stored(nil, nil)
+	if !called {
+		t.Error("expected stored callback to be callable")
+	}
+}

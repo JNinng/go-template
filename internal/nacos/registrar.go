@@ -3,6 +3,8 @@ package nacos
 
 import (
 	"errors"
+	"strings"
+	"sync"
 
 	"go-template/internal/config"
 
@@ -21,8 +23,15 @@ type SubscribeCallback func(services []model.Instance, err error)
 // 封装 Nacos Naming 客户端，提供注册、注销、发现和订阅功能。
 // 通过 NewRegistrar 创建实例，使用完毕后调用 Close 清理资源。
 type Registrar struct {
-	cfg    *config.NacosServiceConfig
-	client naming_client.INamingClient
+	cfg          *config.NacosServiceConfig
+	client       naming_client.INamingClient
+	subCallbacks map[string]SubscribeCallback
+	subMu        sync.Mutex
+}
+
+// subKey builds a map key from service name and clusters.
+func subKey(serviceName string, clusters []string) string {
+	return serviceName + "\x00" + strings.Join(clusters, ",")
 }
 
 // NewRegistrar 创建一个 Nacos 服务注册器
@@ -59,7 +68,11 @@ func NewRegistrar(cfg *config.NacosServiceConfig) (*Registrar, error) {
 		return nil, err
 	}
 
-	return &Registrar{cfg: cfg, client: client}, nil
+	return &Registrar{
+		cfg:          cfg,
+		client:       client,
+		subCallbacks: make(map[string]SubscribeCallback),
+	}, nil
 }
 
 // Register 注册服务实例到 Nacos 并启动心跳
@@ -178,12 +191,20 @@ func (r *Registrar) Subscribe(serviceName string, clusters []string, cb Subscrib
 		return errors.New("nacos naming client is nil")
 	}
 
-	return r.client.Subscribe(&vo.SubscribeParam{
+	err := r.client.Subscribe(&vo.SubscribeParam{
 		ServiceName:       serviceName,
 		Clusters:          clusters,
 		GroupName:         r.cfg.Group,
 		SubscribeCallback: cb,
 	})
+	if err != nil {
+		return err
+	}
+
+	r.subMu.Lock()
+	r.subCallbacks[subKey(serviceName, clusters)] = cb
+	r.subMu.Unlock()
+	return nil
 }
 
 // Unsubscribe 取消服务变更订阅
@@ -199,11 +220,24 @@ func (r *Registrar) Unsubscribe(serviceName string, clusters []string) error {
 		return errors.New("nacos naming client is nil")
 	}
 
+	key := subKey(serviceName, clusters)
+	r.subMu.Lock()
+	cb, ok := r.subCallbacks[key]
+	if ok {
+		delete(r.subCallbacks, key)
+	}
+	r.subMu.Unlock()
+
+	unsubCb := cb
+	if !ok {
+		unsubCb = func(_ []model.Instance, _ error) {}
+	}
+
 	return r.client.Unsubscribe(&vo.SubscribeParam{
 		ServiceName:       serviceName,
 		Clusters:          clusters,
 		GroupName:         r.cfg.Group,
-		SubscribeCallback: func(_ []model.Instance, _ error) {},
+		SubscribeCallback: unsubCb,
 	})
 }
 
