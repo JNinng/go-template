@@ -90,6 +90,7 @@ type ObservabilityConfig struct {
 
 // OTelConfig OpenTelemetry 配置
 type OTelConfig struct {
+	Enabled  bool         `yaml:"enabled" mapstructure:"enabled"`   // 是否启用 OpenTelemetry（总开关）
 	Endpoint string       `yaml:"endpoint" mapstructure:"endpoint"` // OTLP collector 地址
 	Protocol string       `yaml:"protocol" mapstructure:"protocol"` // 协议: "grpc" 或 "http"
 	Logs     SignalConfig `yaml:"logs" mapstructure:"logs"`         // 日志导出配置
@@ -113,21 +114,21 @@ type Config struct {
 	} `yaml:"secret" mapstructure:"secret"`
 }
 
-// ConfigChangeCallback 配置变更回调函数
+// ChangeCallback 配置变更回调函数
 // newCfg: 新的配置对象
 // oldCfg: 旧的配置对象
-type ConfigChangeCallback func(newCfg, oldCfg *Config)
+type ChangeCallback func(newCfg, oldCfg *Config)
 
 // WatchKey 监听器唯一标识符
 // 通过 AddWatch 返回，用于取消监听
 type WatchKey int
 
 var (
-	globalConfig    atomic.Pointer[Config]            // 全局配置指针 (原子操作保证线程安全)
-	callbacks       map[WatchKey]ConfigChangeCallback // 配置变更回调函数映射
-	callbackRWMutex sync.RWMutex                      // 回调函数表的读写锁
-	nextWatchKey    WatchKey                          // 下一个可用的 WatchKey
-	v               *viper.Viper                      // Viper 实例
+	globalConfig    atomic.Pointer[Config]      // 全局配置指针 (原子操作保证线程安全)
+	callbacks       map[WatchKey]ChangeCallback // 配置变更回调函数映射
+	callbackRWMutex sync.RWMutex                // 回调函数表的读写锁
+	nextWatchKey    WatchKey                    // 下一个可用的 WatchKey
+	v               *viper.Viper                // Viper 实例
 )
 
 // 默认配置值
@@ -149,7 +150,7 @@ const (
 	DefaultObsMetricsPath     = "/metrics"
 	DefaultObsHealthPath      = "/health"
 	DefaultNacosServiceWeight = 10
-	DefaultNacosServicePort   = 8080
+	DefaultOTelEnabled        = false
 	DefaultOTelEndpoint       = "localhost:4317"
 	DefaultOTelProtocol       = "grpc"
 )
@@ -186,6 +187,7 @@ func DefaultObservabilityConfig() ObservabilityConfig {
 		MetricsPath: DefaultObsMetricsPath,
 		HealthPath:  DefaultObsHealthPath,
 		OTel: OTelConfig{
+			Enabled:  DefaultOTelEnabled,
 			Endpoint: DefaultOTelEndpoint,
 			Protocol: DefaultOTelProtocol,
 		},
@@ -291,7 +293,7 @@ func DefaultConfig() *Config {
 //   - *Config: 初始化的配置对象
 //   - error: 加载配置失败时返回错误
 func Init(path string, sources ...Source) (*Config, error) {
-	callbacks = make(map[WatchKey]ConfigChangeCallback)
+	callbacks = make(map[WatchKey]ChangeCallback)
 
 	v = viper.New()
 	v.SetConfigFile(path)
@@ -399,6 +401,8 @@ func updateConfig(data []byte) {
 		return
 	}
 
+	newCfg.NacosService.ApplyDefaults(&newCfg.Nacos, &newCfg.App)
+
 	if !reflect.DeepEqual(oldCfg, &newCfg) {
 		triggerCallbacks(&newCfg, oldCfg)
 		globalConfig.Store(&newCfg)
@@ -423,6 +427,7 @@ func setDefaults() {
 	v.SetDefault("observability.addr", DefaultObsAddr)
 	v.SetDefault("observability.metrics_path", DefaultObsMetricsPath)
 	v.SetDefault("observability.health_path", DefaultObsHealthPath)
+	v.SetDefault("observability.otel.enabled", DefaultOTelEnabled)
 	v.SetDefault("observability.otel.endpoint", DefaultOTelEndpoint)
 	v.SetDefault("observability.otel.protocol", DefaultOTelProtocol)
 	v.SetDefault("observability.otel.logs.enabled", false)
@@ -449,7 +454,7 @@ func Get() *Config {
 //
 // 返回值:
 //   - WatchKey: 监听器唯一标识，用于取消监听
-func AddWatch(callback ConfigChangeCallback) WatchKey {
+func AddWatch(callback ChangeCallback) WatchKey {
 	callbackRWMutex.Lock()
 	defer callbackRWMutex.Unlock()
 
@@ -477,14 +482,14 @@ func RemoveWatch(key WatchKey) {
 //   - oldCfg: 旧的配置对象
 func triggerCallbacks(newCfg, oldCfg *Config) {
 	callbackRWMutex.RLock()
-	cbs := make([]ConfigChangeCallback, 0, len(callbacks))
+	cbs := make([]ChangeCallback, 0, len(callbacks))
 	for _, cb := range callbacks {
 		cbs = append(cbs, cb)
 	}
 	callbackRWMutex.RUnlock()
 
 	for _, cb := range cbs {
-		go func(callback ConfigChangeCallback) {
+		go func(callback ChangeCallback) {
 			defer func() {
 				if r := recover(); r != nil {
 				}
@@ -503,6 +508,8 @@ func reloadConfig() error {
 	if err := v.Unmarshal(newCfg); err != nil {
 		return err
 	}
+
+	newCfg.NacosService.ApplyDefaults(&newCfg.Nacos, &newCfg.App)
 
 	oldCfg := globalConfig.Load()
 	if reflect.DeepEqual(newCfg, oldCfg) {

@@ -27,20 +27,18 @@ nacos_service:
   enabled: false
 
 observability:
-  enabled: false
+  enabled: true
   addr: ":9090"
   metrics_path: /metrics
   health_path: /health
   otel:
+    enabled: false
     endpoint: "alloy.com:4318"
     protocol: http
     logs:
       enabled: false
     traces:
       enabled: false
-  tracing:
-    enabled: false
-    endpoint: ""
 
 secret:
   key: ""

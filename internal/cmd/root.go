@@ -9,7 +9,6 @@ import (
 	"go-template/internal/config"
 	"go-template/internal/logger"
 	"go-template/internal/nacos"
-	"go-template/internal/observability"
 	"go-template/internal/signal"
 
 	"github.com/spf13/cobra"
@@ -49,12 +48,6 @@ var rootCmd = &cobra.Command{
 		})
 
 		ctx := signal.ContextWithShutdown(context.Background())
-
-		if cfg.Observability.Enabled {
-			if err := observability.Start(ctx, cfg.Observability); err != nil {
-				logger.Warnf("Failed to start observability: %v", err)
-			}
-		}
 
 		// 自动注册到 Nacos
 		if cfg.NacosService.Enabled {
