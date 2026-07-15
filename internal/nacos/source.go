@@ -3,22 +3,26 @@ package nacos
 
 import (
 	"errors"
+	"log"
 	"sync"
 
 	"go-template/internal/config"
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
-	"github.com/nacos-group/nacos-sdk-go/v2/common/constant"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 	"gopkg.in/yaml.v3"
 )
 
 type source struct {
-	cfg    *config.NacosConfig
-	client config_client.IConfigClient
-	once   sync.Once
-	err    error
+	cfg         *config.NacosConfig
+	client      config_client.IConfigClient
+	once        sync.Once
+	closeOnce   sync.Once
+	mu          sync.Mutex
+	err         error
+	changes     chan []byte
+	listenParam vo.ConfigParam
 }
 
 // NewSource 创建一个 Nacos 配置源
@@ -44,17 +48,12 @@ func (s *source) Init() ([]byte, <-chan []byte, error) {
 	changes := make(chan []byte, 8)
 
 	s.once.Do(func() {
-		clientCfg := constant.NewClientConfig(
-			constant.WithUsername(s.cfg.Username),
-			constant.WithPassword(s.cfg.Password),
-			constant.WithLogLevel(s.cfg.LogLevel),
-			constant.WithLogDir(s.cfg.LogDir),
-			constant.WithCacheDir(s.cfg.CacheDir),
-			constant.WithNotLoadCacheAtStart(true),
+		clientCfg, serverCfgs := newClientConfig(
+			s.cfg.Addr, s.cfg.Port,
+			s.cfg.Username, s.cfg.Password,
+			s.cfg.Namespace,
+			s.cfg.LogLevel, s.cfg.LogDir, s.cfg.CacheDir,
 		)
-		serverCfgs := []constant.ServerConfig{
-			*constant.NewServerConfig(s.cfg.Addr, s.cfg.Port),
-		}
 
 		c, err := clients.NewConfigClient(vo.NacosClientParam{
 			ClientConfig:  clientCfg,
@@ -64,19 +63,26 @@ func (s *source) Init() ([]byte, <-chan []byte, error) {
 			s.err = err
 			return
 		}
-		s.client = c
 
-		err = c.ListenConfig(vo.ConfigParam{
+		s.mu.Lock()
+		s.client = c
+		s.listenParam = vo.ConfigParam{
 			DataId: s.cfg.DataId,
 			Group:  s.cfg.Group,
 			OnChange: func(namespace, group, dataId, data string) {
 				select {
 				case changes <- []byte(data):
 				default:
+					log.Printf("nacos config change dropped: channel full (dataId=%s, group=%s)", dataId, group)
 				}
 			},
-		})
+		}
+		s.changes = changes
+		s.mu.Unlock()
+
+		err = c.ListenConfig(s.listenParam)
 		if err != nil {
+			c.CloseClient() // Listen 失败则清理已创建的连接
 			s.err = err
 			return
 		}
@@ -97,8 +103,24 @@ func (s *source) Init() ([]byte, <-chan []byte, error) {
 	return []byte(content), changes, nil
 }
 
-// Close 关闭 Nacos 配置源
+// Close 关闭 Nacos 配置源，取消监听并释放连接
+//
+// 可安全并发调用（通过 sync.Once 保证只执行一次）。
 func (s *source) Close() error {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		if s.client != nil {
+			if s.listenParam.DataId != "" {
+				s.client.CancelListenConfig(s.listenParam)
+			}
+			s.client.CloseClient()
+		}
+		if s.changes != nil {
+			close(s.changes)
+		}
+	})
 	return nil
 }
 

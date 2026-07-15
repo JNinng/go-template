@@ -25,11 +25,10 @@ import (
 
 // AppConfig 应用程序基础配置
 type AppConfig struct {
-	Name        string `yaml:"name" mapstructure:"name"`                 // 应用名称
-	Env         string `yaml:"env" mapstructure:"env"`                   // 运行环境
-	Port        int    `yaml:"port" mapstructure:"port"`                 // 应用端口
-	Watch       bool   `yaml:"watch" mapstructure:"watch"`               // 是否监控配置文件变更
-	EnableNacos bool   `yaml:"enable_nacos" mapstructure:"enable_nacos"` // 是否启用 Nacos
+	Name  string `yaml:"name" mapstructure:"name"`   // 应用名称
+	Env   string `yaml:"env" mapstructure:"env"`     // 运行环境
+	Port  int    `yaml:"port" mapstructure:"port"`   // 应用端口
+	Watch bool   `yaml:"watch" mapstructure:"watch"` // 是否监控配置文件变更
 }
 
 // LogConfig 日志配置
@@ -46,15 +45,16 @@ type LogConfig struct {
 
 // NacosConfig Nacos 配置中心配置
 type NacosConfig struct {
-	Addr      string `yaml:"addr" mapstructure:"addr"`
-	Port      uint64 `yaml:"port" mapstructure:"port"`
-	Username  string `yaml:"username" mapstructure:"username"`
-	Password  string `yaml:"password" mapstructure:"password"`
+	Enabled   bool   `yaml:"enabled"   mapstructure:"enabled"`
+	Addr      string `yaml:"addr"      mapstructure:"addr"`
+	Port      uint64 `yaml:"port"      mapstructure:"port"`
+	Username  string `yaml:"username"  mapstructure:"username"`
+	Password  string `yaml:"password"  mapstructure:"password"`
 	Namespace string `yaml:"namespace" mapstructure:"namespace"`
-	Group     string `yaml:"group" mapstructure:"group"`
-	DataId    string `yaml:"data_id" mapstructure:"data_id"`
+	Group     string `yaml:"group"     mapstructure:"group"`
+	DataId    string `yaml:"data_id"   mapstructure:"data_id"`
 	LogLevel  string `yaml:"log_level" mapstructure:"log_level"`
-	LogDir    string `yaml:"log_dir" mapstructure:"log_dir"`
+	LogDir    string `yaml:"log_dir"   mapstructure:"log_dir"`
 	CacheDir  string `yaml:"cache_dir" mapstructure:"cache_dir"`
 }
 
@@ -106,7 +106,7 @@ type SignalConfig struct {
 type Config struct {
 	App           AppConfig           `yaml:"app" mapstructure:"app"`
 	Log           LogConfig           `yaml:"log" mapstructure:"log"`
-	Nacos         NacosConfig         `yaml:"nacos" mapstructure:"nacos"`
+	Nacos         NacosConfig         `yaml:"nacos_config" mapstructure:"nacos_config"`
 	NacosService  NacosServiceConfig  `yaml:"nacos_service" mapstructure:"nacos_service"`
 	Observability ObservabilityConfig `yaml:"observability" mapstructure:"observability"`
 	Secret        struct {
@@ -126,6 +126,8 @@ type WatchKey int
 var (
 	globalConfig    atomic.Pointer[Config]      // 全局配置指针 (原子操作保证线程安全)
 	callbacks       map[WatchKey]ChangeCallback // 配置变更回调函数映射
+	sourcesMu       sync.Mutex                  // 保护 sources 切片的互斥锁
+	sources         []Source                    // 已初始化的外部配置源 (用于 shutdown 清理)
 	callbackRWMutex sync.RWMutex                // 回调函数表的读写锁
 	nextWatchKey    WatchKey                    // 下一个可用的 WatchKey
 	v               *viper.Viper                // Viper 实例
@@ -137,7 +139,6 @@ const (
 	DefaultAppEnv             = "dev"          // 默认运行环境
 	DefaultAppPort            = 8080           // 默认应用端口
 	DefaultAppWatch           = false          // 默认监控配置文件变更
-	DefaultAppEnableNacos     = false          // 默认启用 Nacos
 	DefaultLogLevel           = "info"         // 默认日志级别
 	DefaultLogFormat          = "console"      // 默认日志格式
 	DefaultLogPath            = "logs/app.log" // 默认日志路径
@@ -158,11 +159,10 @@ const (
 // DefaultAppConfig 返回默认应用配置
 func DefaultAppConfig() AppConfig {
 	return AppConfig{
-		Name:        DefaultAppName,
-		Env:         DefaultAppEnv,
-		Port:        DefaultAppPort,
-		Watch:       DefaultAppWatch,
-		EnableNacos: DefaultAppEnableNacos,
+		Name:  DefaultAppName,
+		Env:   DefaultAppEnv,
+		Port:  DefaultAppPort,
+		Watch: DefaultAppWatch,
 	}
 }
 
@@ -197,6 +197,7 @@ func DefaultObservabilityConfig() ObservabilityConfig {
 // DefaultNacosConfig 返回默认 Nacos 配置
 func DefaultNacosConfig() NacosConfig {
 	return NacosConfig{
+		Enabled:   false,
 		Addr:      "127.0.0.1",
 		Port:      8848,
 		Username:  "nacos",
@@ -212,60 +213,24 @@ func DefaultNacosConfig() NacosConfig {
 
 // DefaultNacosServiceConfig 返回默认 Nacos 服务注册配置
 //
-// 连接参数（Addr, Port, Namespace, Group, Username, Password,
-// LogLevel, LogDir, CacheDir）和 ServiceName、ServicePort 设为零值，
-// 运行时由 ApplyDefaults 从 NacosConfig / AppConfig 回退填充。
+// 所有连接参数自带独立默认值，不再从 NacosConfig 继承。
+// ServiceName 和 ServicePort 需业务显式配置，无默认值。
 func DefaultNacosServiceConfig() NacosServiceConfig {
 	return NacosServiceConfig{
+		Enabled:     false,
+		Addr:        "127.0.0.1",
+		Port:        8848,
+		Username:    "nacos",
+		Password:    "nacos",
+		Namespace:   "public",
+		Group:       "DEFAULT_GROUP",
 		ClusterName: "DEFAULT",
 		ServiceIP:   "127.0.0.1",
 		Weight:      DefaultNacosServiceWeight,
 		Healthy:     true,
-	}
-}
-
-// ApplyDefaults 从其他配置源补充未设置字段的默认值
-//
-// 连接参数（Addr, Port, Namespace 等）在未配置时回退到 NacosConfig 的值；
-// ServiceName 回退到 AppConfig.Name；
-// ServicePort 回退到 AppConfig.Port。
-//
-// 参数:
-//   - nc: Nacos 配置中心配置（提供连接参数回退值）
-//   - ac: 应用基础配置（提供服务名和端口回退值）
-func (c *NacosServiceConfig) ApplyDefaults(nc *NacosConfig, ac *AppConfig) {
-	if c.Addr == "" {
-		c.Addr = nc.Addr
-	}
-	if c.Port == 0 {
-		c.Port = nc.Port
-	}
-	if c.Namespace == "" {
-		c.Namespace = nc.Namespace
-	}
-	if c.Group == "" {
-		c.Group = nc.Group
-	}
-	if c.Username == "" {
-		c.Username = nc.Username
-	}
-	if c.Password == "" {
-		c.Password = nc.Password
-	}
-	if c.LogLevel == "" {
-		c.LogLevel = nc.LogLevel
-	}
-	if c.LogDir == "" {
-		c.LogDir = nc.LogDir
-	}
-	if c.CacheDir == "" {
-		c.CacheDir = nc.CacheDir
-	}
-	if c.ServiceName == "" {
-		c.ServiceName = ac.Name
-	}
-	if c.ServicePort == 0 {
-		c.ServicePort = uint64(ac.Port)
+		LogLevel:    "debug",
+		LogDir:      "./logs",
+		CacheDir:    "./cache",
 	}
 }
 
@@ -315,8 +280,14 @@ func Init(path string, sources ...Source) (*Config, error) {
 	}
 
 	// 从外部配置源合并
+	type pendingWatcher struct {
+		name    string
+		changes <-chan []byte
+	}
+	var pending []pendingWatcher
+
 	for _, s := range sources {
-		content, changes, err := s.Init()
+		content, changes, err := initSource(s)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: source %s init failed: %v\n", s.Name(), err)
 			continue
@@ -327,15 +298,43 @@ func Init(path string, sources ...Source) (*Config, error) {
 			}
 		}
 		if changes != nil {
-			go watchSource(s.Name(), changes)
+			pending = append(pending, pendingWatcher{s.Name(), changes})
 		}
 	}
 
 	if cfg.App.Watch {
 		StartWatcher()
 	}
+	// 先存储合并后的配置，再启动 watch goroutine
+	// 避免远程变更在 Store 之前到达时被覆盖丢失
 	globalConfig.Store(cfg)
+
+	for _, pw := range pending {
+		go watchSource(pw.name, pw.changes)
+	}
+
 	return cfg, nil
+}
+
+// initSource 初始化单个外部配置源并追踪其生命周期
+//
+// 参数:
+//   - s: 外部配置源
+//
+// 返回值:
+//   - content: 初始配置内容 (nil if empty)
+//   - changes: 配置变更通道 (nil if not supported)
+//   - error: 初始化失败时返回错误
+func initSource(s Source) (content []byte, changes <-chan []byte, err error) {
+	content, changes, err = s.Init()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sourcesMu.Lock()
+	sources = append(sources, s)
+	sourcesMu.Unlock()
+	return content, changes, nil
 }
 
 // MergeSource 在 Init 之后合并外部配置源的内容
@@ -349,7 +348,7 @@ func Init(path string, sources ...Source) (*Config, error) {
 // 返回值:
 //   - error: 合并失败时返回错误
 func MergeSource(source Source) error {
-	content, changes, err := source.Init()
+	content, changes, err := initSource(source)
 	if err != nil {
 		return err
 	}
@@ -359,7 +358,7 @@ func MergeSource(source Source) error {
 		return fmt.Errorf("config not initialized, call Init first")
 	}
 
-	newCfg := *oldCfg
+	newCfg := copyConfig(oldCfg)
 	if content != nil {
 		if err := yaml.Unmarshal(content, &newCfg); err != nil {
 			return err
@@ -371,11 +370,89 @@ func MergeSource(source Source) error {
 		globalConfig.Store(&newCfg)
 	}
 
+	// 在配置存储之后再启动 watch goroutine，避免远程变更
+	// 在 MergeSource 完成 Store 之前到达时被覆盖丢失
 	if changes != nil {
 		go watchSource(source.Name(), changes)
 	}
 
 	return nil
+}
+
+// copyConfig 深拷贝 Config，确保 map/slice/ptr 不共享底层引用
+//
+// 使用反射递归遍历所有字段：map 创建新 map 并拷贝每个 entry，
+// slice 创建新 slice 并拷贝每个元素，指针分配新内存并拷贝指向的值，
+// 结构体递归处理每个导出字段，值类型（string/int/bool/...）直接复制。
+// 这确保 unmarshal 修改新配置时不会污染旧配置，DeepEqual 比较正确工作，
+// 且未来新增任何 map/slice 字段自动获得深拷贝保护。
+func copyConfig(src *Config) Config {
+	if src == nil {
+		return Config{}
+	}
+	return deepCopyValue(reflect.ValueOf(src).Elem()).Interface().(Config)
+}
+
+// deepCopyValue 递归深拷贝任意值
+//
+// map/slice/ptr 类型创建新的底层存储并递归拷贝元素，
+// 结构体递归处理每个导出字段，值类型直接返回（Go 中值类型赋值即拷贝）。
+func deepCopyValue(v reflect.Value) reflect.Value {
+	switch v.Kind() {
+	case reflect.Map:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		m := reflect.MakeMapWithSize(v.Type(), v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			m.SetMapIndex(iter.Key(), deepCopyValue(iter.Value()))
+		}
+		return m
+	case reflect.Slice:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		s := reflect.MakeSlice(v.Type(), v.Len(), v.Cap())
+		for i := 0; i < v.Len(); i++ {
+			s.Index(i).Set(deepCopyValue(v.Index(i)))
+		}
+		return s
+	case reflect.Ptr:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		p := reflect.New(v.Type().Elem())
+		p.Elem().Set(deepCopyValue(v.Elem()))
+		return p
+	case reflect.Struct:
+		s := reflect.New(v.Type()).Elem()
+		for i := 0; i < v.NumField(); i++ {
+			if v.Type().Field(i).IsExported() {
+				s.Field(i).Set(deepCopyValue(v.Field(i)))
+			}
+		}
+		return s
+	default:
+		// string, int, bool, float 等值类型 — 赋值即拷贝
+		return v
+	}
+}
+
+// CloseSources 关闭所有已注册的外部配置源并取消监听
+//
+// 应在应用 shutdown 时调用，确保所有远程配置源的连接和监听器被正确释放。
+// 每个源的 Close 错误会被记录到 stderr，但不会中断其他源的关闭。
+func CloseSources() {
+	sourcesMu.Lock()
+	defer sourcesMu.Unlock()
+
+	for _, s := range sources {
+		if err := s.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing config source %s: %v\n", s.Name(), err)
+		}
+	}
+	sources = nil
 }
 
 // watchSource 监听外部配置源的变更
@@ -396,12 +473,10 @@ func updateConfig(data []byte) {
 		return
 	}
 
-	newCfg := *oldCfg
+	newCfg := copyConfig(oldCfg)
 	if err := yaml.Unmarshal(data, &newCfg); err != nil {
 		return
 	}
-
-	newCfg.NacosService.ApplyDefaults(&newCfg.Nacos, &newCfg.App)
 
 	if !reflect.DeepEqual(oldCfg, &newCfg) {
 		triggerCallbacks(&newCfg, oldCfg)
@@ -411,32 +486,60 @@ func updateConfig(data []byte) {
 
 // setDefaults 设置 Viper 默认值
 func setDefaults() {
-	v.SetDefault("app.name", DefaultAppName)
-	v.SetDefault("app.env", DefaultAppEnv)
-	v.SetDefault("app.port", DefaultAppPort)
-	v.SetDefault("app.watch", DefaultAppWatch)
-	v.SetDefault("app.enable_nacos", DefaultAppEnableNacos)
-	v.SetDefault("log.level", DefaultLogLevel)
-	v.SetDefault("log.format", DefaultLogFormat)
-	v.SetDefault("log.path", DefaultLogPath)
-	v.SetDefault("log.max_size", DefaultLogMaxSize)
-	v.SetDefault("log.max_age", DefaultLogMaxAge)
-	v.SetDefault("log.max_backups", DefaultLogMaxBackups)
-	v.SetDefault("log.compress", DefaultLogCompress)
-	v.SetDefault("log.log_to_console", DefaultLogToConsole)
-	v.SetDefault("observability.addr", DefaultObsAddr)
-	v.SetDefault("observability.metrics_path", DefaultObsMetricsPath)
-	v.SetDefault("observability.health_path", DefaultObsHealthPath)
-	v.SetDefault("observability.otel.enabled", DefaultOTelEnabled)
-	v.SetDefault("observability.otel.endpoint", DefaultOTelEndpoint)
-	v.SetDefault("observability.otel.protocol", DefaultOTelProtocol)
-	v.SetDefault("observability.otel.logs.enabled", false)
-	v.SetDefault("observability.otel.traces.enabled", false)
-	v.SetDefault("nacos_service.enabled", false)
-	v.SetDefault("nacos_service.cluster_name", "DEFAULT")
-	v.SetDefault("nacos_service.service_ip", "127.0.0.1")
-	v.SetDefault("nacos_service.weight", DefaultNacosServiceWeight)
-	v.SetDefault("nacos_service.healthy", true)
+	app := DefaultAppConfig()
+	v.SetDefault("app.name", app.Name)
+	v.SetDefault("app.env", app.Env)
+	v.SetDefault("app.port", app.Port)
+	v.SetDefault("app.watch", app.Watch)
+
+	log := DefaultLogConfig()
+	v.SetDefault("log.level", log.Level)
+	v.SetDefault("log.format", log.Format)
+	v.SetDefault("log.path", log.Path)
+	v.SetDefault("log.max_size", log.MaxSize)
+	v.SetDefault("log.max_age", log.MaxAge)
+	v.SetDefault("log.max_backups", log.MaxBackups)
+	v.SetDefault("log.compress", log.Compress)
+	v.SetDefault("log.log_to_console", log.LogToConsole)
+
+	obs := DefaultObservabilityConfig()
+	v.SetDefault("observability.addr", obs.Addr)
+	v.SetDefault("observability.metrics_path", obs.MetricsPath)
+	v.SetDefault("observability.health_path", obs.HealthPath)
+	v.SetDefault("observability.otel.enabled", obs.OTel.Enabled)
+	v.SetDefault("observability.otel.endpoint", obs.OTel.Endpoint)
+	v.SetDefault("observability.otel.protocol", obs.OTel.Protocol)
+	v.SetDefault("observability.otel.logs.enabled", obs.OTel.Logs.Enabled)
+	v.SetDefault("observability.otel.traces.enabled", obs.OTel.Traces.Enabled)
+
+	nc := DefaultNacosConfig()
+	v.SetDefault("nacos_config.enabled", nc.Enabled)
+	v.SetDefault("nacos_config.addr", nc.Addr)
+	v.SetDefault("nacos_config.port", nc.Port)
+	v.SetDefault("nacos_config.username", nc.Username)
+	v.SetDefault("nacos_config.password", nc.Password)
+	v.SetDefault("nacos_config.namespace", nc.Namespace)
+	v.SetDefault("nacos_config.group", nc.Group)
+	v.SetDefault("nacos_config.data_id", nc.DataId)
+	v.SetDefault("nacos_config.log_level", nc.LogLevel)
+	v.SetDefault("nacos_config.log_dir", nc.LogDir)
+	v.SetDefault("nacos_config.cache_dir", nc.CacheDir)
+
+	ns := DefaultNacosServiceConfig()
+	v.SetDefault("nacos_service.enabled", ns.Enabled)
+	v.SetDefault("nacos_service.addr", ns.Addr)
+	v.SetDefault("nacos_service.port", ns.Port)
+	v.SetDefault("nacos_service.username", ns.Username)
+	v.SetDefault("nacos_service.password", ns.Password)
+	v.SetDefault("nacos_service.namespace", ns.Namespace)
+	v.SetDefault("nacos_service.group", ns.Group)
+	v.SetDefault("nacos_service.cluster_name", ns.ClusterName)
+	v.SetDefault("nacos_service.service_ip", ns.ServiceIP)
+	v.SetDefault("nacos_service.weight", ns.Weight)
+	v.SetDefault("nacos_service.healthy", ns.Healthy)
+	v.SetDefault("nacos_service.log_level", ns.LogLevel)
+	v.SetDefault("nacos_service.log_dir", ns.LogDir)
+	v.SetDefault("nacos_service.cache_dir", ns.CacheDir)
 }
 
 // Get 获取当前配置
@@ -504,20 +607,21 @@ func triggerCallbacks(newCfg, oldCfg *Config) {
 // 返回值:
 //   - error: 解析失败时返回错误
 func reloadConfig() error {
-	newCfg := DefaultConfig()
-	if err := v.Unmarshal(newCfg); err != nil {
+	oldCfg := globalConfig.Load()
+	if oldCfg == nil {
+		return nil // 配置尚未初始化，忽略此次事件
+	}
+	newCfg := copyConfig(oldCfg)
+	if err := v.Unmarshal(&newCfg); err != nil {
 		return err
 	}
 
-	newCfg.NacosService.ApplyDefaults(&newCfg.Nacos, &newCfg.App)
-
-	oldCfg := globalConfig.Load()
-	if reflect.DeepEqual(newCfg, oldCfg) {
+	if reflect.DeepEqual(oldCfg, &newCfg) {
 		return nil
 	}
 
-	triggerCallbacks(newCfg, oldCfg)
-	globalConfig.Store(newCfg)
+	triggerCallbacks(&newCfg, oldCfg)
+	globalConfig.Store(&newCfg)
 	return nil
 }
 
@@ -531,7 +635,6 @@ func GenerateConfig(outputPath string) {
 	}
 
 	cfg := DefaultConfig()
-	cfg.NacosService.ApplyDefaults(&cfg.Nacos, &cfg.App)
 	data, err := cfg.ToYAML()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to marshal config: %v\n", err)
@@ -579,7 +682,9 @@ func StartWatcher() {
 	}
 	once.Do(func() {
 		v.OnConfigChange(func(_ fsnotify.Event) {
-			reloadConfig()
+			if err := reloadConfig(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error reloading config: %v\n", err)
+			}
 		})
 		v.WatchConfig()
 	})

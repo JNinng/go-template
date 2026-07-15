@@ -116,12 +116,15 @@ This pattern keeps Nacos addr/port/auth in local YAML while business config live
 
 Default config file resolution: `defaultConfigPath()` in `internal/cmd/root.go` checks `configs/config.yaml` first, falls back to `config.yaml`. Config schema (`Config` struct in `internal/config/config.go`) has sections:
 
-| Section         | Purpose                                          |
-|-----------------|--------------------------------------------------|
-| `app`           | Name, env, watch toggle, nacos enable            |
-| `log`           | Level, format, output path, rotation, console    |
-| `nacos`         | Addr, port, auth, namespace, group, dataId, logs |
-| `observability` | Enabled, listen addr, paths, tracing             |
-| `secret`        | Secret key placeholder                           |
+| Section         | Purpose                                                |
+|-----------------|--------------------------------------------------------|
+| `app`           | Name, env, port, watch toggle                          |
+| `log`           | Level, format, output path, rotation, console          |
+| `nacos_config`  | Config center: enabled, addr, auth, namespace, dataId  |
+| `nacos_service` | Service registration: enabled, addr, weight, metadata  |
+| `observability` | Enabled, listen addr, paths, tracing                   |
+| `secret`        | Secret key placeholder                                 |
 
-Nacos integration is opt-in via `app.enable_nacos: true`. The recommended pattern is two-phase init: load local config first (which contains Nacos connection params), then use `config.MergeSource(nacos.NewSource(&cfg.Nacos))` to pull business config from Nacos. When merged, Nacos values take precedence over local file config on conflict.
+Nacos integration has two independent switches:
+- `nacos_config.enabled: true` — enables the Nacos config center (remote configuration). The recommended pattern is two-phase init: load local config first (which contains connection params), then use `config.MergeSource(nacos.NewSource(&cfg.Nacos))` to pull business config from Nacos. When merged, Nacos values take precedence over local file config on conflict.
+- `nacos_service.enabled: true` — enables Nacos service registration, which registers this instance as a Nacos service with health check and heartbeat.

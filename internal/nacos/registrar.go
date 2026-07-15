@@ -10,7 +10,6 @@ import (
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client"
-	"github.com/nacos-group/nacos-sdk-go/v2/common/constant"
 	"github.com/nacos-group/nacos-sdk-go/v2/model"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
@@ -22,11 +21,13 @@ type SubscribeCallback func(services []model.Instance, err error)
 //
 // 封装 Nacos Naming 客户端，提供注册、注销、发现和订阅功能。
 // 通过 NewRegistrar 创建实例，使用完毕后调用 Close 清理资源。
+// Close 可安全并发调用。
 type Registrar struct {
 	cfg          *config.NacosServiceConfig
 	client       naming_client.INamingClient
 	subCallbacks map[string]SubscribeCallback
 	subMu        sync.Mutex
+	closeOnce    sync.Once
 }
 
 // subKey builds a map key from service name and clusters.
@@ -46,19 +47,19 @@ func NewRegistrar(cfg *config.NacosServiceConfig) (*Registrar, error) {
 	if cfg == nil {
 		return nil, errors.New("nacos service config is nil")
 	}
-
-	clientCfg := constant.NewClientConfig(
-		constant.WithUsername(cfg.Username),
-		constant.WithPassword(cfg.Password),
-		constant.WithNamespaceId(cfg.Namespace),
-		constant.WithLogLevel(cfg.LogLevel),
-		constant.WithLogDir(cfg.LogDir),
-		constant.WithCacheDir(cfg.CacheDir),
-		constant.WithNotLoadCacheAtStart(true),
-	)
-	serverCfgs := []constant.ServerConfig{
-		*constant.NewServerConfig(cfg.Addr, cfg.Port),
+	if cfg.ServiceName == "" {
+		return nil, errors.New("nacos service config: ServiceName is required")
 	}
+	if cfg.ServicePort == 0 {
+		return nil, errors.New("nacos service config: ServicePort is required")
+	}
+
+	clientCfg, serverCfgs := newClientConfig(
+		cfg.Addr, cfg.Port,
+		cfg.Username, cfg.Password,
+		cfg.Namespace,
+		cfg.LogLevel, cfg.LogDir, cfg.CacheDir,
+	)
 
 	client, err := clients.NewNamingClient(vo.NacosClientParam{
 		ClientConfig:  clientCfg,
@@ -242,8 +243,12 @@ func (r *Registrar) Unsubscribe(serviceName string, clusters []string) error {
 }
 
 // Close 关闭注册器，释放底层连接资源
+//
+// 可安全并发调用（通过 sync.Once 保证只执行一次）。
 func (r *Registrar) Close() {
-	if r.client != nil {
-		r.client.CloseClient()
-	}
+	r.closeOnce.Do(func() {
+		if r.client != nil {
+			r.client.CloseClient()
+		}
+	})
 }

@@ -10,9 +10,8 @@ import (
 
 func TestNewRegistrar(t *testing.T) {
 	cfg := config.DefaultNacosServiceConfig()
-	nc := config.DefaultNacosConfig()
-	ac := config.DefaultAppConfig()
-	cfg.ApplyDefaults(&nc, &ac)
+	cfg.ServiceName = "test-service"
+	cfg.ServicePort = 8080
 
 	r, err := NewRegistrar(&cfg)
 	if err != nil {
@@ -37,7 +36,10 @@ func TestNewRegistrarNilConfig(t *testing.T) {
 func TestNewRegistrarDefaults(t *testing.T) {
 	cfg := config.DefaultNacosServiceConfig()
 
-	// 不可继承字段 — 应有默认值
+	// 所有字段自带独立默认值
+	if cfg.Enabled {
+		t.Error("expected Enabled false")
+	}
 	if cfg.ClusterName != "DEFAULT" {
 		t.Errorf("expected ClusterName DEFAULT, got %q", cfg.ClusterName)
 	}
@@ -50,31 +52,34 @@ func TestNewRegistrarDefaults(t *testing.T) {
 	if cfg.ServiceIP != "127.0.0.1" {
 		t.Errorf("expected ServiceIP 127.0.0.1, got %q", cfg.ServiceIP)
 	}
+	if cfg.Addr != "127.0.0.1" {
+		t.Errorf("expected Addr 127.0.0.1, got %q", cfg.Addr)
+	}
+	if cfg.Port != 8848 {
+		t.Errorf("expected Port 8848, got %d", cfg.Port)
+	}
+	if cfg.Group != "DEFAULT_GROUP" {
+		t.Errorf("expected Group DEFAULT_GROUP, got %q", cfg.Group)
+	}
+	if cfg.Namespace != "public" {
+		t.Errorf("expected Namespace public, got %q", cfg.Namespace)
+	}
 
-	// 可继承字段 — 应为零值，等待 ApplyDefaults 填充
+	// ServiceName 和 ServicePort 需业务配置，保持零值
 	if cfg.ServiceName != "" {
-		t.Errorf("expected ServiceName empty before ApplyDefaults, got %q", cfg.ServiceName)
+		t.Errorf("expected ServiceName empty, got %q", cfg.ServiceName)
 	}
 	if cfg.ServicePort != 0 {
-		t.Errorf("expected ServicePort 0 before ApplyDefaults, got %d", cfg.ServicePort)
-	}
-	if cfg.Addr != "" {
-		t.Errorf("expected Addr empty before ApplyDefaults, got %q", cfg.Addr)
+		t.Errorf("expected ServicePort 0, got %d", cfg.ServicePort)
 	}
 
-	// ApplyDefaults 后应有回退值
-	nc := config.DefaultNacosConfig()
-	ac := config.DefaultAppConfig()
-	cfg.ApplyDefaults(&nc, &ac)
-
-	if cfg.ServiceName != ac.Name {
-		t.Errorf("expected ServiceName %q after ApplyDefaults, got %q", ac.Name, cfg.ServiceName)
+	// 零值 ServiceName/ServicePort 应被 NewRegistrar 拒绝
+	r, err := NewRegistrar(&cfg)
+	if err == nil {
+		t.Error("expected error for missing ServiceName/ServicePort, got nil")
 	}
-	if cfg.ServicePort != uint64(ac.Port) {
-		t.Errorf("expected ServicePort %d after ApplyDefaults, got %d", ac.Port, cfg.ServicePort)
-	}
-	if cfg.Addr != nc.Addr {
-		t.Errorf("expected Addr %q after ApplyDefaults, got %q", nc.Addr, cfg.Addr)
+	if r != nil {
+		t.Error("expected nil registrar on validation failure")
 	}
 }
 
@@ -135,30 +140,24 @@ func TestCloseNilClient(t *testing.T) {
 func TestConfigDefaultNacosServiceConfig(t *testing.T) {
 	ns := config.DefaultNacosServiceConfig()
 
-	// 可继承字段应为零值
-	if ns.Addr != "" {
-		t.Errorf("expected Addr empty, got %q", ns.Addr)
+	// 所有连接字段自带独立默认值
+	if ns.Addr != "127.0.0.1" {
+		t.Errorf("expected Addr 127.0.0.1, got %q", ns.Addr)
 	}
-	if ns.Port != 0 {
-		t.Errorf("expected Port 0, got %d", ns.Port)
+	if ns.Port != 8848 {
+		t.Errorf("expected Port 8848, got %d", ns.Port)
 	}
-	if ns.Group != "" {
-		t.Errorf("expected Group empty, got %q", ns.Group)
+	if ns.Group != "DEFAULT_GROUP" {
+		t.Errorf("expected Group DEFAULT_GROUP, got %q", ns.Group)
 	}
-
-	// ApplyDefaults 后应有回退值
-	nc := config.DefaultNacosConfig()
-	ac := config.DefaultAppConfig()
-	ns.ApplyDefaults(&nc, &ac)
-
-	if ns.Addr != nc.Addr {
-		t.Errorf("expected Addr %q after ApplyDefaults, got %q", nc.Addr, ns.Addr)
+	if ns.LogLevel != "debug" {
+		t.Errorf("expected LogLevel debug, got %q", ns.LogLevel)
 	}
-	if ns.Port != nc.Port {
-		t.Errorf("expected Port %d after ApplyDefaults, got %d", nc.Port, ns.Port)
+	if ns.LogDir != "./logs" {
+		t.Errorf("expected LogDir ./logs, got %q", ns.LogDir)
 	}
-	if ns.Group != nc.Group {
-		t.Errorf("expected Group %q after ApplyDefaults, got %q", nc.Group, ns.Group)
+	if ns.CacheDir != "./cache" {
+		t.Errorf("expected CacheDir ./cache, got %q", ns.CacheDir)
 	}
 }
 

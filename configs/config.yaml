@@ -13,18 +13,41 @@ log:
   compress: true
   log_to_console: true
 
-nacos:
-  addr: 127.0.0.1
-  port: 8848
-  namespace: public
-  group: DEFAULT_GROUP
-  data_id: template-app.yml
-  log_level: debug
-  log_dir: logs
-  cache_dir: cache
+# Nacos 配置中心 — 用于从 Nacos 远程拉取业务配置
+# 连接参数与 nacos_service 独立配置，互不影响
+nacos_config:
+  enabled: false                    # 是否从 Nacos 拉取远程配置
+  addr: 127.0.0.1                   # Nacos 服务地址
+  port: 8848                        # Nacos 服务端口
+  username: "nacos"                 # 认证用户名
+  password: "nacos"                 # 认证密码
+  namespace: public                 # 命名空间（用于多租户隔离）
+  group: DEFAULT_GROUP              # 配置分组
+  data_id: template-app.yml         # 远程配置 dataId
+  log_level: debug                  # Nacos SDK 日志级别
+  log_dir: logs                     # Nacos SDK 日志目录
+  cache_dir: cache                  # Nacos SDK 缓存目录
 
+# Nacos 服务注册 — 将本实例注册到 Nacos 服务列表
+# 连接参数与 nacos_config 独立配置，互不影响
 nacos_service:
-  enabled: false
+  enabled: false                    # 是否注册本服务到 Nacos
+  addr: 127.0.0.1                   # Nacos 服务地址
+  port: 8848                        # Nacos 服务端口
+  username: "nacos"                 # 认证用户名
+  password: "nacos"                 # 认证密码
+  namespace: public                 # 命名空间（用于多租户隔离）
+  group: DEFAULT_GROUP              # 服务分组
+  service_name: ""                  # 注册的服务名（必填，无默认值）
+  cluster_name: "DEFAULT"           # 集群名
+  service_ip: "127.0.0.1"           # 本实例 IP
+  service_port: 0                   # 本实例端口（必填，无默认值）
+  weight: 10                        # 权重（1-100，用于负载均衡）
+  healthy: true                     # 初始健康状态
+  metadata: {}                      # 扩展元数据（key-value）
+  log_level: debug                  # Nacos SDK 日志级别
+  log_dir: logs                     # Nacos SDK 日志目录
+  cache_dir: cache                  # Nacos SDK 缓存目录
 
 observability:
   enabled: true

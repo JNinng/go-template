@@ -38,6 +38,14 @@ var rootCmd = &cobra.Command{
 			return fmt.Errorf("logger init: %w", err)
 		}
 
+		// Nacos 配置中心 — 从远程拉取配置
+		if cfg.Nacos.Enabled {
+			if err := config.MergeSource(nacos.NewSource(&cfg.Nacos)); err != nil {
+				logger.Warnf("Failed to init nacos config source: %v", err)
+			}
+			cfg = config.Get() // MergeSource 后刷新，获取合并后的配置
+		}
+
 		config.AddWatch(func(newCfg, oldCfg *config.Config) {
 			if newCfg.Log != oldCfg.Log {
 				newLc := newCfg.LoggerConfig()
@@ -48,19 +56,19 @@ var rootCmd = &cobra.Command{
 		})
 
 		ctx := signal.ContextWithShutdown(context.Background())
+		defer config.CloseSources() // 确保外部配置源在 shutdown 时正确关闭
 
-		// 自动注册到 Nacos
+		// Nacos 服务注册 — 将本实例注册到 Nacos
 		if cfg.NacosService.Enabled {
-			cfg.NacosService.ApplyDefaults(&cfg.Nacos, &cfg.App)
 			registrar, err := nacos.NewRegistrar(&cfg.NacosService)
 			if err != nil {
 				logger.Warnf("Failed to create nacos registrar: %v", err)
 			} else {
+				defer registrar.Close() // 确保客户端连接在 shutdown 时关闭
 				if err := registrar.Register(); err != nil {
 					logger.Warnf("Failed to register service with nacos: %v", err)
 				} else {
-					defer registrar.Deregister()
-					defer registrar.Close()
+					defer registrar.Deregister() // 仅成功注册后才注销
 					logger.Info("Service registered with Nacos",
 						zap.String("service", cfg.NacosService.ServiceName),
 						zap.String("ip", cfg.NacosService.ServiceIP),
