@@ -152,7 +152,7 @@ const (
 	DefaultObsHealthPath      = "/health"
 	DefaultNacosServiceWeight = 10
 	DefaultOTelEnabled        = false
-	DefaultOTelEndpoint       = "localhost:4317"
+	DefaultOTelEndpoint       = ""
 	DefaultOTelProtocol       = "grpc"
 )
 
