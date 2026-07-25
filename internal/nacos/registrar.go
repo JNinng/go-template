@@ -2,6 +2,7 @@
 package nacos
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -20,14 +21,15 @@ type SubscribeCallback func(services []model.Instance, err error)
 // Registrar Nacos 服务注册器
 //
 // 封装 Nacos Naming 客户端，提供注册、注销、发现和订阅功能。
-// 通过 NewRegistrar 创建实例，使用完毕后调用 Close 清理资源。
-// Close 可安全并发调用。
+// 通过 NewRegistrar 创建实例，使用完毕后调用 Shutdown 清理资源。
+// Shutdown 可安全并发调用。
 type Registrar struct {
 	cfg          *config.NacosServiceConfig
 	client       naming_client.INamingClient
 	subCallbacks map[string]SubscribeCallback
 	subMu        sync.Mutex
 	closeOnce    sync.Once
+	registered   bool
 }
 
 // subKey builds a map key from service name and clusters.
@@ -105,6 +107,7 @@ func (r *Registrar) Register() error {
 	if !ok {
 		return errors.New("register instance failed: returned false")
 	}
+	r.registered = true
 	return nil
 }
 
@@ -242,13 +245,29 @@ func (r *Registrar) Unsubscribe(serviceName string, clusters []string) error {
 	})
 }
 
-// Close 关闭注册器，释放底层连接资源
+// Shutdown 统一关闭入口：先注销服务（如已注册），再释放客户端连接。
 //
+// 实现 func(context.Context) error 签名，可直接 push 到 shutdown 栈。
 // 可安全并发调用（通过 sync.Once 保证只执行一次）。
-func (r *Registrar) Close() {
+func (r *Registrar) Shutdown(_ context.Context) error {
+	var err error
 	r.closeOnce.Do(func() {
+		if r.registered && r.client != nil {
+			if e := r.Deregister(); e != nil {
+				err = e
+			}
+		}
 		if r.client != nil {
 			r.client.CloseClient()
 		}
 	})
+	return err
+}
+
+// Close 关闭注册器，释放底层连接资源
+//
+// Deprecated: 请使用 Shutdown 代替。
+// 可安全并发调用（通过 sync.Once 保证只执行一次）。
+func (r *Registrar) Close() {
+	r.Shutdown(context.Background())
 }

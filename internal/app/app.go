@@ -3,38 +3,43 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
+
 	"go-template/internal/config"
 	"go-template/internal/logger"
-	"go-template/internal/observability"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 )
+
+// Deps 由 root.go 注入的基础设施依赖（可选）。
+//
+// 双端口模式下字段为 nil，业务代码无需关心。
+// 单端口模式下 root.go 会填充 HealthHandler / MetricsHandler，
+// 业务代码将其注册到自己的 HTTP server 即可。
+type Deps struct {
+	HealthHandler  http.Handler
+	MetricsHandler http.Handler
+}
 
 // Run 启动业务逻辑。
 //
-// OTel（tracing + logs）在 root.go 的 infra 层已初始化，
-func Run(ctx context.Context) error {
+// OTel（tracing + logs）已在 root.go 基础设施层初始化完毕，
+// 业务代码可直接使用 otel.Tracer() 获取 tracer。
+func Run(ctx context.Context, deps Deps) error {
 	cfg := config.Get()
 
-	if cfg.Observability.Enabled {
-		// 通过 WithRegistrar 回调注册 observability 路由到 fiber
-		//options := observability.WithRegistrar(
-		//	func(healthPath, metricsPath string, health, metrics http.Handler) {
-		//		app.Get(healthPath, adaptor.HTTPHandler(health))
-		//		app.Get(metricsPath, adaptor.HTTPHandler(metrics))
-		//	},
-		//)
-		err := observability.Start(ctx, cfg.Observability)
-		if err != nil {
-			logger.Warn("Start observability failed", zap.Error(err))
-		}
+	// 单端口模式：将 health/metrics handler 注册到业务 HTTP server
+	if deps.HealthHandler != nil {
+		// 示例（fiber）:
+		// app.Get(cfg.Observability.HealthPath, adaptor.HTTPHandler(deps.HealthHandler))
+		// app.Get(cfg.Observability.MetricsPath, adaptor.HTTPHandler(deps.MetricsHandler))
+		_ = deps.MetricsHandler
 	}
+
 	if cfg.Observability.OTel.Enabled {
-		// 此时 tracing.Init 已通过 observability.Start → InitOTel 执行，
-		// 全局 TracerProvider 已就绪，可以创建 span 获取 trace ID。
 		var span trace.Span
-		_, span = otel.Tracer("app").Start(ctx, "app-run")
+		_, span = otel.Tracer(cfg.App.Name).Start(ctx, "app-run")
 		traceId := span.SpanContext().TraceID().String()
 		logger.Info(fmt.Sprintf("traceId: %s", traceId))
 		span.End()

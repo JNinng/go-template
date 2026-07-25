@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"go-template/internal/app"
 	"go-template/internal/config"
 	"go-template/internal/logger"
 	"go-template/internal/nacos"
+	"go-template/internal/observability"
 	"go-template/internal/signal"
 
 	"github.com/spf13/cobra"
@@ -28,6 +30,8 @@ var rootCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		configPath, _ := cmd.Flags().GetString("config")
 
+		// ─── 初始化（顺序即依赖） ───
+
 		cfg, err := config.Init(configPath)
 		if err != nil {
 			return fmt.Errorf("config init: %w", err)
@@ -43,7 +47,7 @@ var rootCmd = &cobra.Command{
 			if err := config.MergeSource(nacos.NewSource(&cfg.Nacos)); err != nil {
 				logger.Warnf("Failed to init nacos config source: %v", err)
 			}
-			cfg = config.Get() // MergeSource 后刷新，获取合并后的配置
+			cfg = config.Get()
 		}
 
 		config.AddWatch(func(newCfg, oldCfg *config.Config) {
@@ -55,26 +59,38 @@ var rootCmd = &cobra.Command{
 			}
 		})
 
-		ctx := signal.ContextWithShutdown(context.Background())
-		defer config.CloseSources() // 确保外部配置源在 shutdown 时正确关闭
+		// ─── shutdown 栏（逆序清理） ───
 
-		// Nacos 服务注册 — 将本实例注册到 Nacos
+		var cleanups []func(context.Context) error
+		push := func(fn func(context.Context) error) {
+			cleanups = append(cleanups, fn)
+		}
+
+		ctx := signal.ContextWithShutdown(context.Background())
+
+		// Config sources
+		push(func(context.Context) error { config.CloseSources(); return nil })
+
+		// OTel (tracing + logs)
+		otelShutdown := observability.InitOTel(ctx, cfg.Observability.OTel)
+		push(otelShutdown)
+
+		// Nacos 服务注册
 		if cfg.NacosService.Enabled {
 			registrar, err := nacos.NewRegistrar(&cfg.NacosService)
 			if err != nil {
 				logger.Warnf("Failed to create nacos registrar: %v", err)
 			} else {
-				defer registrar.Close() // 确保客户端连接在 shutdown 时关闭
 				if err := registrar.Register(); err != nil {
 					logger.Warnf("Failed to register service with nacos: %v", err)
 				} else {
-					defer registrar.Deregister() // 仅成功注册后才注销
 					logger.Info("Service registered with Nacos",
 						zap.String("service", cfg.NacosService.ServiceName),
 						zap.String("ip", cfg.NacosService.ServiceIP),
 						zap.Uint64("port", cfg.NacosService.ServicePort),
 					)
 				}
+				push(registrar.Shutdown)
 			}
 		}
 
@@ -83,11 +99,41 @@ var rootCmd = &cobra.Command{
 			zap.String("env", cfg.App.Env),
 		)
 
-		if err := app.Run(ctx); err != nil {
+		// ─── 运行业务 ───
+
+		deps := app.Deps{}
+
+		// Observability HTTP（配置驱动端口模式）
+		if cfg.Observability.Enabled {
+			if cfg.Observability.SinglePort {
+				// 单端口：handler 注入业务 server
+				deps.HealthHandler = observability.HealthHandler()
+				deps.MetricsHandler = observability.MetricsHandler()
+			} else {
+				// 双端口：起独立 HTTP server
+				srvShutdown, err := observability.StartServer(ctx, cfg.Observability)
+				if err != nil {
+					logger.Warn("Failed to start observability server", zap.Error(err))
+				} else {
+					push(srvShutdown)
+				}
+			}
+		}
+
+		if err := app.Run(ctx, deps); err != nil {
 			logger.Error("Application error", zap.Error(err))
 		}
 
+		// ─── 逆序清理 ───
+
 		logger.Info("Cleaning up resources...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			if err := cleanups[i](shutdownCtx); err != nil {
+				logger.Warn("Cleanup error", zap.Int("index", i), zap.Error(err))
+			}
+		}
 		logger.Sync()
 		return nil
 	},

@@ -82,6 +82,7 @@ type NacosServiceConfig struct {
 // ObservabilityConfig 可观测性配置
 type ObservabilityConfig struct {
 	Enabled     bool       `yaml:"enabled" mapstructure:"enabled"`
+	SinglePort  bool       `yaml:"single_port" mapstructure:"single_port"` // true: handler 注入业务 server；false: 独立 HTTP server
 	Addr        string     `yaml:"addr" mapstructure:"addr"`
 	MetricsPath string     `yaml:"metrics_path" mapstructure:"metrics_path"`
 	HealthPath  string     `yaml:"health_path" mapstructure:"health_path"`
@@ -183,6 +184,7 @@ func DefaultLogConfig() LogConfig {
 // DefaultObservabilityConfig 返回默认可观测性配置
 func DefaultObservabilityConfig() ObservabilityConfig {
 	return ObservabilityConfig{
+		SinglePort:  false,
 		Addr:        DefaultObsAddr,
 		MetricsPath: DefaultObsMetricsPath,
 		HealthPath:  DefaultObsHealthPath,
@@ -503,6 +505,7 @@ func setDefaults() {
 	v.SetDefault("log.log_to_console", log.LogToConsole)
 
 	obs := DefaultObservabilityConfig()
+	v.SetDefault("observability.single_port", obs.SinglePort)
 	v.SetDefault("observability.addr", obs.Addr)
 	v.SetDefault("observability.metrics_path", obs.MetricsPath)
 	v.SetDefault("observability.health_path", obs.HealthPath)

@@ -51,6 +51,7 @@ nacos_service:
 
 observability:
   enabled: true
+  single_port: false  # true: handler 注入业务 server；false: 独立 HTTP server
   addr: ":9090"
   metrics_path: /metrics
   health_path: /health
