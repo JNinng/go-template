@@ -45,7 +45,7 @@ var rootCmd = &cobra.Command{
 		// Nacos 配置中心 — 从远程拉取配置
 		if cfg.Nacos.Enabled {
 			if err := config.MergeSource(nacos.NewSource(&cfg.Nacos)); err != nil {
-				logger.Warnf("Failed to init nacos config source: %v", err)
+				logger.Warn("nacos_config_source_init_failed", zap.Error(err))
 			}
 			cfg = config.Get()
 		}
@@ -54,7 +54,7 @@ var rootCmd = &cobra.Command{
 			if newCfg.Log != oldCfg.Log {
 				newLc := newCfg.LoggerConfig()
 				if err := logger.Reset(&newLc); err != nil {
-					logger.Error("Failed to reset logger", zap.Error(err))
+					logger.Error("logger_reset_failed", zap.Error(err))
 				}
 			}
 		})
@@ -79,12 +79,12 @@ var rootCmd = &cobra.Command{
 		if cfg.NacosService.Enabled {
 			registrar, err := nacos.NewRegistrar(&cfg.NacosService)
 			if err != nil {
-				logger.Warnf("Failed to create nacos registrar: %v", err)
+				logger.WarnContext(ctx, "nacos_registrar_create_failed", zap.Error(err))
 			} else {
 				if err := registrar.Register(); err != nil {
-					logger.Warnf("Failed to register service with nacos: %v", err)
+					logger.WarnContext(ctx, "nacos_service_register_failed", zap.Error(err))
 				} else {
-					logger.Info("Service registered with Nacos",
+					logger.InfoContext(ctx, "nacos_service_registered",
 						zap.String("service", cfg.NacosService.ServiceName),
 						zap.String("ip", cfg.NacosService.ServiceIP),
 						zap.Uint64("port", cfg.NacosService.ServicePort),
@@ -94,7 +94,7 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		logger.Info("Application initialized",
+		logger.InfoContext(ctx, "application_started",
 			zap.String("name", cfg.App.Name),
 			zap.String("env", cfg.App.Env),
 		)
@@ -113,7 +113,7 @@ var rootCmd = &cobra.Command{
 				// 双端口：起独立 HTTP server
 				srvShutdown, err := observability.StartServer(ctx, cfg.Observability)
 				if err != nil {
-					logger.Warn("Failed to start observability server", zap.Error(err))
+					logger.WarnContext(ctx, "observability_server_start_failed", zap.Error(err))
 				} else {
 					push(srvShutdown)
 				}
@@ -121,17 +121,17 @@ var rootCmd = &cobra.Command{
 		}
 
 		if err := app.Run(ctx, deps); err != nil {
-			logger.Error("Application error", zap.Error(err))
+			logger.ErrorContext(ctx, "application_run_error", zap.Error(err))
 		}
 
 		// ─── 逆序清理 ───
 
-		logger.Info("Cleaning up resources...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		logger.InfoContext(shutdownCtx, "application_cleanup_started")
 		defer cancel()
 		for i := len(cleanups) - 1; i >= 0; i-- {
 			if err := cleanups[i](shutdownCtx); err != nil {
-				logger.Warn("Cleanup error", zap.Int("index", i), zap.Error(err))
+				logger.WarnContext(shutdownCtx, "cleanup_error", zap.Int("index", i), zap.Error(err))
 			}
 		}
 		logger.Sync()

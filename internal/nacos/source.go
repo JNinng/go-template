@@ -3,14 +3,15 @@ package nacos
 
 import (
 	"errors"
-	"log"
 	"sync"
 
 	"go-template/internal/config"
+	"go-template/internal/logger"
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
@@ -73,7 +74,10 @@ func (s *source) Init() ([]byte, <-chan []byte, error) {
 				select {
 				case changes <- []byte(data):
 				default:
-					log.Printf("nacos config change dropped: channel full (dataId=%s, group=%s)", dataId, group)
+					logger.Warn("nacos_config_change_dropped",
+						zap.String("data_id", dataId),
+						zap.String("group", group),
+					)
 				}
 			},
 		}

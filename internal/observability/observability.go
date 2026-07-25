@@ -13,6 +13,7 @@ import (
 
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
+	"go.uber.org/zap"
 )
 
 // ─── OpenTelemetry 初始化 ───
@@ -37,16 +38,16 @@ func InitOTel(ctx context.Context, cfg config.OTelConfig) func(context.Context) 
 
 	traceShutdown, err := tracing.Init(ctx, cfg, res)
 	if err != nil {
-		logger.Warnf("Failed to init tracing: %v", err)
+		logger.WarnContext(ctx, "tracing_init_failed", zap.Error(err))
 	}
 
 	logCore, logShutdown, err := logs.Init(ctx, cfg, res)
 	if err != nil {
-		logger.Warnf("Failed to init OTel logs: %v", err)
+		logger.WarnContext(ctx, "otel_logs_init_failed", zap.Error(err))
 	}
 	if logCore != nil {
 		if err := logger.AddCore(logCore); err != nil {
-			logger.Warnf("Failed to add OTel log core: %v", err)
+			logger.WarnContext(ctx, "otel_log_core_add_failed", zap.Error(err))
 		}
 	}
 
@@ -91,9 +92,11 @@ func StartServer(_ context.Context, cfg config.ObservabilityConfig) (func(contex
 	}
 
 	go func() {
-		logger.Infof("Observability HTTP server starting on %s", cfg.Addr)
+		logger.Info("observability_server_starting",
+			zap.String("addr", cfg.Addr),
+		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Warnf("Observability HTTP server error: %v", err)
+			logger.Warn("observability_server_error", zap.Error(err))
 		}
 	}()
 

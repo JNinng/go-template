@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"go-template/internal/config"
@@ -10,6 +9,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
 // Deps 由 root.go 注入的基础设施依赖（可选）。
@@ -41,12 +41,14 @@ func Run(ctx context.Context, deps Deps) error {
 		var span trace.Span
 		_, span = otel.Tracer(cfg.App.Name).Start(ctx, "app-run")
 		traceId := span.SpanContext().TraceID().String()
-		logger.Info(fmt.Sprintf("traceId: %s", traceId))
+		logger.InfoContext(ctx, "otel_app_run_started",
+			zap.String("trace_id", traceId),
+		)
 		span.End()
 	}
 
 	<-ctx.Done()
 
-	logger.Info("Business logic shutting down")
+	logger.InfoContext(ctx, "business_logic_shutdown_completed")
 	return nil
 }

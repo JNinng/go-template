@@ -283,9 +283,9 @@ func Warn(msg string, fields ...zap.Field) {
 	getLogger().Warn(msg, fields...)
 }
 
-// Error 输出 Error 级别日志
+// Error 输出 Error 级别日志，自动注入 stack 信息
 func Error(msg string, fields ...zap.Field) {
-	getLogger().Error(msg, fields...)
+	getLogger().Error(msg, append(fields, zap.Stack("stack"))...)
 }
 
 // DPanic 输出 DPanic 级别日志
@@ -318,9 +318,9 @@ func WarnContext(ctx context.Context, msg string, fields ...zap.Field) {
 	getLogger().Warn(msg, append(fields, withTraceContext(ctx)...)...)
 }
 
-// ErrorContext 输出带有 trace context 的 Error 级别日志
+// ErrorContext 输出带有 trace context 的 Error 级别日志，自动注入 stack 信息
 func ErrorContext(ctx context.Context, msg string, fields ...zap.Field) {
-	getLogger().Error(msg, append(fields, withTraceContext(ctx)...)...)
+	getLogger().Error(msg, append(fields, append(withTraceContext(ctx), zap.Stack("stack"))...)...)
 }
 
 // DPanicContext 输出带有 trace context 的 DPanic 级别日志
@@ -433,6 +433,17 @@ func sugarTraceContext(ctx context.Context) []any {
 		result[i] = f
 	}
 	return result
+}
+
+// Check 检查指定级别是否能输出日志（用于 Debug 性能优化）。
+//
+// 返回 nil 时跳过整个代码块，避免无意义的序列化开销：
+//
+//	if ce := logger.Check(zap.DebugLevel, "cache_lookup_detail"); ce != nil {
+//	    ce.Write(zap.String("key", key), zap.Any("payload", largeStruct))
+//	}
+func Check(lvl zapcore.Level, msg string) *zapcore.CheckedEntry {
+	return getLogger().Check(lvl, msg)
 }
 
 // Sync 同步日志缓冲区
